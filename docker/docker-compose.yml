@@ -1,0 +1,41 @@
+services:
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    networks:
+      - my-network
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./cert:/etc/nginx/cert
+      - ./conf.d:/etc/nginx/conf.d
+      - ../:/var/www/html
+      - ./logs:/var/log/nginx
+  php83-fpm:
+    build: ./.
+    image: php83-fpm
+    container_name: php83-fpm
+    networks:
+      - my-network
+    ports:
+      - 9003:9003
+    volumes:
+      - ../:/var/www/html
+
+  redis:
+    image: redis:latest
+    container_name: redis_node
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - my-network
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis.conf
+      - ./redis/data:/usr/local/redis/data
+      - ./redis/redis.log:/usr/local/redis/redis.log
+
+networks:
+  my-network:
+    driver: bridge
