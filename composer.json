@@ -19,12 +19,7 @@
     },
     "autoload": {
         "psr-4": {
-            "App\\": "app/",
-            "App\\Controllers\\": "app/Controllers/",
-            "App\\Libraries\\": "app/Libraries/",
-            "App\\Models\\": "app/Models/",
-            "App\\Services\\": "app/Services/",
-            "App\\Exceptions\\": "app/Exceptions/"
+            "App\\": "app/"
         },
         "files": [
             "app/helpers.php"
