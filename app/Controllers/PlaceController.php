@@ -17,7 +17,10 @@ class PlaceController extends Controller
                     'message' => '地址不能為空',
                 ], 422);
             }
-            $mapsService = new GoogleMapsService();
+
+            $logger = f3()->get('LOGGER');
+
+            $mapsService = new GoogleMapsService($logger);
             $result = $mapsService->place_suggestions($address);
 
             response()->success(['suggestions' => $result])->send();

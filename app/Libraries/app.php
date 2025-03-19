@@ -11,7 +11,6 @@ class App
     private $dice;
     private $container_rules = [];
     private $dpop_handler;
-    private $logger;
 
     public function __construct()
     {
@@ -19,54 +18,53 @@ class App
         $this->dice = new \Dice\Dice();
     }
 
-    /**
-     * Setup Monolog logger
-     *
-     * @param string $log_path Path to store log files
-     * @param string $channel_name Logger channel name
-     * @param string $log_level Minimum log level to record
-     * @return self
-     */
+    public function initialize(string $base_dir, array $config_files = []): self
+    {
+        $this->loadEnvFile($base_dir);
+        $this->loadConfigs(array_map(fn($file) => $base_dir . $file, $config_files));
+        return $this;
+    }
+
     public function setupLogger(string $log_path, string $channel_name = 'app', string $log_level = 'debug'): self
     {
-        // Create logger instance
-        $this->logger = new Logger($channel_name);
-
-        // Define log format
+        // 創建 Logger 實例
+        $logger = new Logger($channel_name);
         $output_format = "[%datetime%] %channel%.%level_name%: %message% %context% %extra%\n";
         $formatter = new LineFormatter($output_format);
 
-        // Add rotating file handler (keeps logs for 7 days)
+        // 檢查日誌級別是否有效，如果無效則記錄警告
+        $level = strtolower($log_level);
+        $valid_levels = ['debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency'];
+        if (!in_array($level, $valid_levels)) {
+            $log_level = 'debug'; // 使用預設值
+            $logger->warning("無效的日誌層級: {$level}，使用預設值 DEBUG");
+        }
+
         $rotating_handler = new RotatingFileHandler(
             $log_path . '/' . $channel_name . '.log',
             7,
             $this->getLogLevel($log_level)
         );
         $rotating_handler->setFormatter($formatter);
-        $this->logger->pushHandler($rotating_handler);
+        $logger->pushHandler($rotating_handler);
 
-        // Register logger in container for dependency injection
+        // 將 Logger 註冊到 Dice 容器，設為共享實例
         $this->container_rules[Logger::class] = [
             'shared' => true,
             'instanceOf' => Logger::class,
-            'substitutions' => [
-                Logger::class => $this->logger,
+            'constructParams' => [$channel_name],
+            'call' => [
+                ['pushHandler', [$rotating_handler]],
             ],
         ];
         $this->dice = $this->dice->addRules($this->container_rules);
 
-        // Add logger to F3 hive for global access
-        $this->f3->set('LOGGER', $this->logger);
+        // 將 Logger 放入 F3 hive，以便全局存取（可選）
+        $this->f3->set('LOGGER', $logger);
 
         return $this;
     }
 
-    /**
-     * Convert string log level to Monolog constant
-     *
-     * @param string $level Log level string
-     * @return int Monolog log level constant
-     */
     private function getLogLevel(string $level): int
     {
         $level = strtolower($level);
@@ -81,17 +79,17 @@ class App
             'emergency' => Logger::EMERGENCY,
         ];
 
-        return $levels[$level] ?? Logger::DEBUG;
+        if (!isset($levels[$level])) {
+            // 注意：這裡不應該提早使用 dice 容器獲取 Logger
+            // 改為返回預設值，並在 setupLogger 中稍後記錄警告
+            return Logger::DEBUG;
+        }
+        return $levels[$level];
     }
 
-    /**
-     * Get logger instance
-     *
-     * @return Logger
-     */
     public function getLogger(): Logger
     {
-        return $this->logger;
+        return $this->dice->create(Logger::class);
     }
 
     public function loadConfigs(array $config_files): self
@@ -99,7 +97,6 @@ class App
         foreach ($config_files as $file) {
             $this->f3->config($file);
         }
-
         return $this;
     }
 
@@ -107,11 +104,7 @@ class App
     {
         $this->container_rules = array_merge($this->container_rules, $rules);
         $this->dice = $this->dice->addRules($this->container_rules);
-
-        $this->f3->set('CONTAINER', function ($class) {
-            return $this->dice->create($class);
-        });
-
+        $this->f3->set('CONTAINER', fn($class) => $this->dice->create($class));
         return $this;
     }
 
@@ -119,34 +112,29 @@ class App
     {
         $dotenv = \Dotenv\Dotenv::createImmutable($path);
         $dotenv->safeLoad();
-
         return $this;
     }
 
     public function setMiddleware(array | string $pattern, callable $handler): self
     {
         \Middleware::instance()->before($pattern, $handler);
-
         return $this;
     }
 
     public function setupErrorHandler(): self
     {
         $this->f3->set('ONERROR', function ($f3) {
+            $logger = $this->dice->create(Logger::class);
             $error = $f3->get('EXCEPTION');
 
             if ($error instanceof \App\Exceptions\BaseException) {
                 $response = $error->getErrorResponse();
                 $http_code = $error->getHttpCode();
-
-                // Log exception with contextual data
-                if ($this->logger) {
-                    $this->logger->error('Application exception: ' . $error->getMessage(), [
-                        'code' => $response['code'],
-                        'http_code' => $http_code,
-                        'details' => $response['details'] ?? [],
-                    ]);
-                }
+                $logger->error('Application exception: ' . $error->getMessage(), [
+                    'code' => $response['code'],
+                    'http_code' => $http_code,
+                    'details' => $response['details'] ?? [],
+                ]);
             } else {
                 $error = $f3->get('ERROR');
                 $response = [
@@ -155,147 +143,134 @@ class App
                     'message' => $error['text'],
                 ];
                 $http_code = $error['code'];
-
-                // Log system error
-                if ($this->logger) {
-                    $this->logger->error('System error: ' . $error['text'], [
-                        'code' => $error['code'],
-                        'file' => $error['file'],
-                        'line' => $error['line'],
-                        'trace' => $error['trace'],
-                    ]);
-                }
+                $logger->error('System error: ' . $error['text'], [
+                    'code' => $error['code'],
+                    'file' => $error['file'],
+                    'line' => $error['line'],
+                    'trace' => $error['trace'],
+                ]);
             }
 
             response()->error($response['code'], $response['message'], $response['details'] ?? [], $http_code)->send();
         });
-
         return $this;
     }
 
     public function run(): void
     {
-        require_once '../vendor/autoload.php';
-
-        if ($this->logger) {
-            $this->logger->info('Application starting');
-        }
-
+        $logger = $this->dice->create(Logger::class);
+        $logger->info('Application starting');
         \Middleware::instance()->run();
 
-        $allowed_origins = [
-            'https://local.fstu.com:5173', 'https://fstu.wuts.cc',
-        ];
-
+        $allowed_origins = ['https://local.fstu.com:5173', 'https://fstu.wuts.cc'];
         $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 
-        if (in_array($origin, $allowed_origins) /*&& $this->f3->hive['VERB'] == 'OPTIONS'*/) {
+        if (in_array($origin, $allowed_origins)) {
             $this->f3->set('CORS', [
-                'origin' => '*',
-                'headers' => 'Access-Control-Allow-Origin, X-Requested-With,X-Requested-From, X-Requested-Token, Content-Type, Content-Range, Content-Disposition, Origin, Accept, Authorization, Dpop',
-                'ttl' => '86400',
+                'origin' => $origin,
+                'headers' => 'Access-Control-Allow-Origin, X-Requested-With, X-Requested-From, X-Requested-Token, Content-Type, Content-Range, Content-Disposition, Origin, Accept, Authorization, Dpop',
+                'ttl' => 86400,
                 'expose' => true,
                 'credentials' => false,
             ]);
         }
 
         $this->setupDB();
-
         \Falsum\Run::handler();
-
         $this->f3->run();
-
-        if ($this->logger) {
-            $this->logger->info('Application finished');
-        }
+        $logger->info('Application finished');
     }
 
-    public function setupDB()
+    public function setupDB(): void
     {
+        $logger = $this->dice->create(Logger::class);
         $db = new \App\Libraries\DB([
             'type' => 'mysql',
-            'host' => env('DB_HOST'),
-            'database' => env('DB_DATABASE'),
-            'username' => env('DB_USERNAME'),
-            'password' => env('DB_PASSWORD'),
-            'prefix' => env('DB_PREFIX'),
+            'host' => $this->getEnv('DB_HOST', 'localhost'),
+            'database' => $this->getEnv('DB_DATABASE'),
+            'username' => $this->getEnv('DB_USERNAME'),
+            'password' => $this->getEnv('DB_PASSWORD'),
+            'prefix' => $this->getEnv('DB_PREFIX', ''),
         ]);
 
-        if ($this->logger) {
-            $this->logger->info('Database connection established', [
-                'host' => env('DB_HOST'),
-                'database' => env('DB_DATABASE'),
-            ]);
-        }
+        $logger->info('Database connection established', [
+            'host' => $this->getEnv('DB_HOST'),
+            'database' => $this->getEnv('DB_DATABASE'),
+        ]);
 
         \App\Models\BaseModel::setConnection($db);
     }
 
+    private function getEnv(string $key, $default = null)
+    {
+        $value = env($key);
+        if ($value === null) {
+            $logger = $this->dice->create(Logger::class);
+            $logger->warning("環境變數 {$key} 未設定，使用預設值", ['default' => $default]);
+        }
+        return $value ?? $default;
+    }
+
     public function setupDpop(string $private_key_path, string $public_key_path): self
     {
-        $this->dpop_handler = new DpopHandler($private_key_path, $public_key_path);
-
-        if ($this->logger) {
-            $this->logger->info('DPoP handler initialized', [
+        $logger = $this->dice->create(Logger::class);
+        if (!file_exists($private_key_path) || !file_exists($public_key_path)) {
+            $logger->error('DPoP 金鑰檔案不存在', [
                 'private_key_path' => $private_key_path,
                 'public_key_path' => $public_key_path,
             ]);
+            throw new \RuntimeException('無法找到 DPoP 金鑰檔案');
         }
 
+        $this->dpop_handler = new DpopHandler($private_key_path, $public_key_path);
+        $this->container_rules['App\Libraries\DpopHandler'] = [
+            'shared' => true,
+            'constructParams' => [$private_key_path, $public_key_path],
+        ];
+        $this->dice = $this->dice->addRules($this->container_rules);
+
+        $logger->info('DPoP handler initialized', [
+            'private_key_path' => $private_key_path,
+            'public_key_path' => $public_key_path,
+        ]);
+
         return $this;
+    }
+
+    private function verifyDpopProof($f3, $dpop_proof, $verb, $uri, $validation_method, $log_context = []): void
+    {
+        $logger = $this->dice->create(Logger::class);
+        if (!$dpop_proof) {
+            $logger->warning('DPoP proof missing', $log_context);
+            throw new \App\Exceptions\DpopException(101);
+        }
+
+        if (!$this->dpop_handler->$validation_method($dpop_proof, $verb, $uri)) {
+            $logger->warning('Invalid DPoP proof', $log_context);
+            throw new \App\Exceptions\DpopException(120);
+        }
+
+        $logger->debug('DPoP verification successful', $log_context);
     }
 
     public function addDpopMiddleware(): self
     {
         $this->setMiddleware('POST /auth/line_login', function ($f3, $params) {
             $dpop_proof = $f3->get('HEADERS.Dpop');
-            if (!$dpop_proof) {
-                if ($this->logger) {
-                    $this->logger->warning('DPoP proof missing for line login request');
-                }
-                throw new \App\Exceptions\DpopException(101);
-            }
-
-            if (!$this->dpop_handler->verifyRequestDpop($dpop_proof, $f3->get('VERB'), $f3->get('SCHEME') . '://' . $f3->get('HOST') . $f3->get('URI'))) {
-                if ($this->logger) {
-                    $this->logger->warning('Invalid DPoP proof for line login request');
-                }
-                throw new \App\Exceptions\DpopException(120);
-            }
-
-            if ($this->logger) {
-                $this->logger->info('DPoP verification successful for line login');
-            }
+            $uri = $f3->get('SCHEME') . '://' . $f3->get('HOST') . $f3->get('URI');
+            $this->verifyDpopProof($f3, $dpop_proof, $f3->get('VERB'), $uri, 'verifyRequestDpop', [
+                'uri' => $uri,
+                'method' => $f3->get('VERB'),
+            ]);
         });
 
         $this->setMiddleware(['GET|POST|PUT|DELETE /auth/profile', 'GET|POST|PUT|DELETE /place/*'], function ($f3, $params) {
             $dpop_proof = $f3->get('HEADERS.Dpop');
-            if (!$dpop_proof) {
-                if ($this->logger) {
-                    $this->logger->warning('DPoP proof missing for protected endpoint', [
-                        'uri' => $f3->get('URI'),
-                        'method' => $f3->get('VERB'),
-                    ]);
-                }
-                throw new \App\Exceptions\DpopException(101);
-            }
-
-            if (!$this->dpop_handler->validateAccessToken($dpop_proof, $f3->get('VERB'), $f3->get('SCHEME') . '://' . $f3->get('HOST') . $f3->get('URI'))) {
-                if ($this->logger) {
-                    $this->logger->warning('Invalid access token in DPoP proof', [
-                        'uri' => $f3->get('URI'),
-                        'method' => $f3->get('VERB'),
-                    ]);
-                }
-                throw new \App\Exceptions\DpopException(120);
-            }
-
-            if ($this->logger) {
-                $this->logger->debug('DPoP access token validation successful', [
-                    'uri' => $f3->get('URI'),
-                    'method' => $f3->get('VERB'),
-                ]);
-            }
+            $uri = $f3->get('SCHEME') . '://' . $f3->get('HOST') . $f3->get('URI');
+            $this->verifyDpopProof($f3, $dpop_proof, $f3->get('VERB'), $uri, 'validateAccessToken', [
+                'uri' => $uri,
+                'method' => $f3->get('VERB'),
+            ]);
         });
 
         return $this;
