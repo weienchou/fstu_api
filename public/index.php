@@ -2,7 +2,8 @@
 require_once '../vendor/autoload.php';
 
 $app = new \App\Libraries\App();
-$app->loadConfigs(['../config/config.ini', '../config/routes.ini'])
+$app->setupLogger(__DIR__ . '/../storage/logs/', 'app', 'debug')
+    ->loadConfigs(['../config/config.ini', '../config/routes.ini'])
     ->setupContainer([
         'App\Libraries\Request' => ['shared' => true],
         'App\Libraries\DpopHandler' => [

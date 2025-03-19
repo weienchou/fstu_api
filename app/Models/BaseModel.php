@@ -70,6 +70,30 @@ class BaseModel
         return $data->rowCount() > 0;
     }
 
+    public static function createOrUpdate(array $conditions, array $data)
+    {
+        $fields = array_intersect_key($data, array_flip(static::$fillable));
+
+        $existing = static::$conn->get(static::$table, '*', $conditions);
+
+        if ($existing) {
+            if (static::$has_timestamps) {
+                $fields['updated_at'] = self::getCurrentTimestamp();
+            }
+            static::$conn->update(static::$table, $fields, $conditions);
+            return static::findById($existing[static::$primary_key]);
+        } else {
+            if (static::$has_timestamps) {
+                $current_time = self::getCurrentTimestamp();
+                $fields['created_at'] = $current_time;
+                $fields['updated_at'] = $current_time;
+            }
+            $fields = array_merge($conditions, $fields);
+            static::$conn->insert(static::$table, $fields);
+            return static::findById(static::$conn->id());
+        }
+    }
+
     protected static function getCurrentTimestamp()
     {
         return date('Y-m-d H:i:s');
