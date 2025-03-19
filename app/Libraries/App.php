@@ -184,7 +184,7 @@ class App
         \Middleware::instance()->run();
 
         $allowed_origins = [
-            'https://local.fstu.com:5173',
+            'https://local.fstu.com:5173', 'https://fstu.wuts.cc',
         ];
 
         $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
