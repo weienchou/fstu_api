@@ -152,10 +152,12 @@ class GoogleMapsService
 
             return $this->place_format($body);
         } catch (\Exception $e) {
+            $response = $e->getResponse();
             $this->logError('Failed to fetch place suggestions from API', [
                 'address' => $address,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
+                'body' => $response->getBody()->getContents(),
             ]);
 
             error_log('Failed to fetch place suggestions: ' . $e->getMessage());
