@@ -37,11 +37,11 @@ class Redis
     private static function loadConfig()
     {
         self::$config = [
-            'host' => getenv('REDIS_HOST') ?: '127.0.0.1',
-            'port' => getenv('REDIS_PORT') ?: 6379,
-            'password' => getenv('REDIS_PASSWORD') ?: null,
-            'database' => getenv('REDIS_DATABASE') ?: 0,
-            'prefix' => getenv('REDIS_PREFIX') ?: '',
+            'host' => env('REDIS_HOST') ?: '127.0.0.1',
+            'port' => env('REDIS_PORT') ?: 6379,
+            'password' => env('REDIS_PASSWORD') ?: null,
+            'database' => env('REDIS_DATABASE') ?: 0,
+            'prefix' => env('REDIS_PREFIX') ?: '',
         ];
     }
 
@@ -78,12 +78,14 @@ class Redis
         }
     }
 
-    public static function setex($key, $seconds, $value)
+    public static function setex($key, $seconds, $value): bool
     {
         try {
             self::getInstance();
-            return self::$client->setex($key, $seconds, $value);
+            $result = self::$client->setex($key, $seconds, $value);
+            return $result === 'OK';
         } catch (\Exception $e) {
+            dd($e);
             throw new RedisException(340);
         }
     }
@@ -122,7 +124,7 @@ class Redis
     {
         try {
             self::getInstance();
-            return self::$client->hset($key, field, $value);
+            return self::$client->hset($key, $field, $value);
         } catch (\Exception $e) {
             throw new RedisException(344);
         }

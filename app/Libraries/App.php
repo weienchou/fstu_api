@@ -176,6 +176,7 @@ class App
         }
 
         $this->setupDB();
+        $this->setupRedis();
         \Falsum\Run::handler();
         $this->f3->run();
         $logger->info('Application finished');
@@ -199,6 +200,54 @@ class App
         ]);
 
         \App\Models\BaseModel::setConnection($db);
+    }
+
+    public function setupRedis(array $config = []): self
+    {
+        $logger = $this->dice->create(Logger::class);
+
+        try {
+            // 設置 Redis 配置
+            // $redis_config = [
+            //     'host' => $this->getEnv('REDIS_HOST', 'redis'),
+            //     'port' => $this->getEnv('REDIS_PORT', 6379),
+            //     'password' => $this->getEnv('REDIS_PASSWORD'),
+            //     'database' => $this->getEnv('REDIS_DATABASE', 0),
+            //     'prefix' => $this->getEnv('REDIS_PREFIX', ''),
+            // ];
+
+            // // 合併傳入的配置（如果有）
+            // if (!empty($config)) {
+            //     $redis_config = array_merge($redis_config, $config);
+            // }
+
+            // // 設置 Redis 配置
+            // \App\Libraries\Redis::setConfig($redis_config);
+
+            // 將 Redis 類註冊到 Dice 容器
+            $this->container_rules['App\Libraries\Redis'] = [
+                'shared' => true,
+                'instanceOf' => 'App\Libraries\Redis',
+            ];
+            $this->dice = $this->dice->addRules($this->container_rules);
+
+            // $logger->info('Redis connection established', [
+            //     'host' => $redis_config['host'],
+            //     'port' => $redis_config['port'],
+            //     'database' => $redis_config['database'],
+            // ]);
+
+        } catch (\Exception $e) {
+            $logger->error('Failed to establish Redis connection', [
+                'message' => $e->getMessage(),
+                'code' => $e->getCode(),
+            ]);
+
+            // 如果 Redis 連接失敗，可以選擇是否拋出異常
+            // throw new \RuntimeException('無法建立 Redis 連接');
+        }
+
+        return $this;
     }
 
     private function getEnv(string $key, $default = null)

@@ -24,4 +24,11 @@ class Request extends HTTP\RequestDecorator
 
         return $payload;
     }
+
+    public function params()
+    {
+        $params = $this->request->getQueryParameters();
+
+        return $params;
+    }
 }
